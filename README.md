@@ -28,3 +28,16 @@ npm run dev
 
 `main` 브랜치에 푸시하면 `.github/workflows/pages.yml`이 Vue 앱을 빌드하고 Pages에
 배포합니다. 저장소의 Pages 설정에서 Source를 `GitHub Actions`로 선택해야 합니다.
+
+## 프로젝트 전용 GitHub CLI
+
+GitHub CLI는 Homebrew 전역 설치 대신 이 프로젝트의 `.tools/bin/gh`에 둘 수 있습니다.
+
+```sh
+./scripts/install-gh-local.sh
+./scripts/gh --version
+./scripts/gh auth login --hostname github.com --git-protocol https --web
+```
+
+`.tools/`는 Git에서 제외됩니다. 실행 파일은 프로젝트 단위로 관리하지만 로그인 토큰은
+프로젝트 파일이 아니라 macOS 보안 저장소에 보관합니다.

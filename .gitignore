@@ -47,4 +47,5 @@ next-env.d.ts
 /data/
 /source/
 /tmp/
+/.tools/
 public/vault/*.tmp

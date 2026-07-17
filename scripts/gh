@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+executable="$project_root/.tools/bin/gh"
+
+if [ ! -x "$executable" ]; then
+  echo "프로젝트 전용 GitHub CLI가 없습니다. ./scripts/install-gh-local.sh를 먼저 실행하세요." >&2
+  exit 1
+fi
+
+exec "$executable" "$@"
