@@ -1,0 +1,28 @@
+{
+  "name": "mep-evidence-search",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview",
+    "data:build": "python3 scripts/build-search-index.py",
+    "vault:encrypt": "node scripts/encrypt-vault.mjs",
+    "vault:verify": "node scripts/verify-vault.mjs",
+    "secret:setup": "node scripts/setup-local-password.mjs"
+  },
+  "dependencies": {
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.0",
+    "@types/node": "22.19.19",
+    "typescript": "5.9.3",
+    "vite": "^8.0.0",
+    "vue-tsc": "^3.1.0"
+  },
+  "type": "module"
+}

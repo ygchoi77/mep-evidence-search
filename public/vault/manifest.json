@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "algorithm": "AES-GCM",
+  "kdf": {
+    "name": "PBKDF2",
+    "hash": "SHA-256",
+    "iterations": 600000,
+    "salt": "d1dOAWVyUg8UItOltuBXHA=="
+  },
+  "summary": {
+    "title": "설비 근거검색",
+    "source": "기계설비 기술기준 매뉴얼",
+    "sourceDate": "2022-05",
+    "snapshotDate": "2026-07-17",
+    "pages": 466,
+    "citations": 1310,
+    "articles": 438,
+    "instruments": 163,
+    "reviews": 294,
+    "mappedCitations": 1106,
+    "notice": "설계 판단의 참고 자료이며 최종 적용 전 공식 원문과 프로젝트 조건을 확인해야 합니다."
+  },
+  "assets": {
+    "index": {
+      "path": "index.enc",
+      "iv": "KyePoz7hucVJH7WM",
+      "bytes": 5254166
+    },
+    "manual": {
+      "path": "manual.enc",
+      "iv": "6DGawGq1W+DbWozP",
+      "bytes": 16414084,
+      "mime": "application/pdf"
+    }
+  }
+}
