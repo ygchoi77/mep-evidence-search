@@ -114,6 +114,8 @@ const quickQueries = [
   "KDS 31 35 12",
 ];
 
+const PAGE_SIZE = 20;
+
 const stopWords = new Set([
   "기준",
   "관련",
@@ -137,9 +139,11 @@ const unlockError = ref("");
 const query = ref("");
 const kind = ref<"all" | ItemKind>("all");
 const status = ref<"all" | ItemStatus>("all");
+const currentPage = ref(1);
 const pdfLoading = ref(false);
 const pdfUrl = ref<string | null>(null);
 const searchInput = ref<HTMLInputElement | null>(null);
+const resultsHeading = ref<HTMLElement | null>(null);
 const aiAccessToken = ref("");
 const aiLoading = ref(false);
 const aiResult = ref<AiResult | null>(null);
@@ -337,8 +341,27 @@ const results = computed(() => {
   return filtered
     .map((item) => ({ item, score: scoreItem(item, query.value) }))
     .filter((result) => result.score > 0)
-    .sort((left, right) => right.score - left.score)
-    .slice(0, 60);
+    .sort((left, right) => right.score - left.score);
+});
+
+const totalPages = computed(() => Math.max(1, Math.ceil(results.value.length / PAGE_SIZE)));
+const resultOffset = computed(() => (currentPage.value - 1) * PAGE_SIZE);
+const paginatedResults = computed(() =>
+  results.value.slice(resultOffset.value, resultOffset.value + PAGE_SIZE),
+);
+const visiblePages = computed(() => {
+  if (totalPages.value <= 7) {
+    return Array.from({ length: totalPages.value }, (_, index) => index + 1);
+  }
+  return [...new Set([
+    1,
+    totalPages.value,
+    currentPage.value - 1,
+    currentPage.value,
+    currentPage.value + 1,
+  ])]
+    .filter((page) => page >= 1 && page <= totalPages.value)
+    .sort((left, right) => left - right);
 });
 
 const aiEvidence = computed<AiEvidence[]>(() =>
@@ -388,12 +411,22 @@ function lock() {
   query.value = "";
   kind.value = "all";
   status.value = "all";
+  currentPage.value = 1;
   aiAccessToken.value = "";
   aiResult.value = null;
   aiSources.value = [];
   aiError.value = "";
   aiCostAcknowledged.value = false;
   aiUsageSummary.value = { requests: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+}
+
+function goToPage(page: number) {
+  const nextPage = Math.min(Math.max(page, 1), totalPages.value);
+  if (nextPage === currentPage.value) return;
+  currentPage.value = nextPage;
+  window.requestAnimationFrame(() => {
+    resultsHeading.value?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
 }
 
 async function askAi() {
@@ -446,6 +479,7 @@ async function askAi() {
 }
 
 watch([query, kind, status], () => {
+  currentPage.value = 1;
   aiResult.value = null;
   aiSources.value = [];
   aiError.value = "";
@@ -740,12 +774,16 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <div class="results-heading">
+        <div ref="resultsHeading" class="results-heading">
           <div>
             <p>{{ query ? `“${query}” 검색 결과` : "주요 공식 근거" }}</p>
             <strong>{{ results.length.toLocaleString("ko-KR") }}건</strong>
           </div>
-          <span>관련도순 · 최대 60건</span>
+          <span v-if="results.length">
+            관련도순 · {{ (resultOffset + 1).toLocaleString("ko-KR") }}–{{
+              Math.min(resultOffset + PAGE_SIZE, results.length).toLocaleString("ko-KR")
+            }}건 표시
+          </span>
         </div>
 
         <div v-if="results.length === 0" class="empty-state">
@@ -756,11 +794,11 @@ onBeforeUnmount(() => {
 
         <div v-else class="result-list">
           <article
-            v-for="({ item, score }, indexNumber) in results"
+            v-for="({ item, score }, indexNumber) in paginatedResults"
             :key="`${item.kind}-${item.id}`"
             class="result-card"
           >
-            <div class="result-index">{{ String(indexNumber + 1).padStart(2, "0") }}</div>
+            <div class="result-index">{{ String(resultOffset + indexNumber + 1).padStart(2, "0") }}</div>
             <div class="result-content">
               <div class="result-meta">
                 <span :class="['kind', `kind-${item.kind}`]">{{ kindLabels[item.kind] }}</span>
@@ -788,6 +826,45 @@ onBeforeUnmount(() => {
             </div>
           </article>
         </div>
+
+        <nav v-if="results.length && totalPages > 1" class="pagination" aria-label="검색 결과 페이지">
+          <button
+            class="pagination-nav"
+            type="button"
+            :disabled="currentPage === 1"
+            aria-label="이전 검색 결과 페이지"
+            @click="goToPage(currentPage - 1)"
+          >
+            ← 이전
+          </button>
+          <template v-for="(page, pageIndex) in visiblePages" :key="page">
+            <span
+              v-if="pageIndex > 0 && page - visiblePages[pageIndex - 1] > 1"
+              class="pagination-ellipsis"
+              aria-hidden="true"
+            >
+              …
+            </span>
+            <button
+              type="button"
+              :class="{ active: currentPage === page }"
+              :aria-current="currentPage === page ? 'page' : undefined"
+              :aria-label="`${page}페이지`"
+              @click="goToPage(page)"
+            >
+              {{ page }}
+            </button>
+          </template>
+          <button
+            class="pagination-nav"
+            type="button"
+            :disabled="currentPage === totalPages"
+            aria-label="다음 검색 결과 페이지"
+            @click="goToPage(currentPage + 1)"
+          >
+            다음 →
+          </button>
+        </nav>
       </section>
     </div>
 
