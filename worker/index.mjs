@@ -52,6 +52,11 @@ function tokenMatches(received, expected) {
   return difference === 0;
 }
 
+function vectorStoreId(env) {
+  const value = env.OPENAI_VECTOR_STORE_ID?.trim() || "";
+  return /^vs_[A-Za-z0-9_-]+$/.test(value) ? value : "";
+}
+
 async function readJson(request) {
   const declaredLength = Number(request.headers.get("Content-Length") || 0);
   if (declaredLength > MAX_BODY_BYTES) {
@@ -107,7 +112,11 @@ export default {
       });
     }
     if (request.method === "GET" && url.pathname === "/health") {
-      return jsonResponse(request, env, { ok: true, model: env.OPENAI_MODEL || DEFAULT_MODEL });
+      return jsonResponse(request, env, {
+        ok: true,
+        model: env.OPENAI_MODEL || DEFAULT_MODEL,
+        manualSearch: Boolean(vectorStoreId(env)),
+      });
     }
     if (request.method !== "POST" || url.pathname !== "/api/ask") {
       return jsonResponse(request, env, { error: "요청 경로를 찾을 수 없습니다." }, 404);
@@ -126,13 +135,17 @@ export default {
       if (!await checkRateLimit(request, env)) {
         return jsonResponse(request, env, { error: "요청이 많습니다. 1분 뒤 다시 시도해 주세요." }, 429);
       }
-      const { question, evidence } = validateRequest(await readJson(request));
+      const manualStoreId = vectorStoreId(env);
+      const { question, evidence } = validateRequest(await readJson(request), {
+        allowEmptyEvidence: Boolean(manualStoreId),
+      });
       const result = await askOpenAi({
         apiKey: env.OPENAI_API_KEY,
         model: env.OPENAI_MODEL || DEFAULT_MODEL,
         question,
         evidence,
         safetyIdentifier: await sha256(`mep-evidence:${clientIp(request)}`),
+        vectorStoreId: manualStoreId,
       });
       return jsonResponse(request, env, result);
     } catch (error) {

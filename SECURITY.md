@@ -28,6 +28,14 @@ GitHub Pages는 정적 호스팅이므로 HTML, CSS, JavaScript와 배포 파일
 - Vue 코드, GitHub Pages, 브라우저, GitHub Actions 빌드에는 전달하지 않음
 - Cloudflare Workers에서는 암호화된 Secret `OPENAI_API_KEY`로 설정
 
+### 공개 매뉴얼 Vector Store ID
+
+- 용도: OpenAI File Search가 공개 매뉴얼 저장소를 선택
+- 공개 매뉴얼 쪽별 파일과 로컬 상태는 Git에서 제외한 `work/`에 보관
+- Cloudflare Workers에서는 Secret `OPENAI_VECTOR_STORE_ID`로 설정
+- 시험 저장소는 자동 만료를 설정하고, 필요 없으면 원본 업로드 파일과 함께 삭제
+- 운영 저장소는 자동 만료되지 않으므로 자료 교체·서비스 종료 시 관리 명령으로 명시적으로 삭제
+
 ### AI 접속 토큰
 
 - 브라우저는 공유 비밀번호 자체를 보내지 않고 PBKDF2-SHA256 600,000회로 파생한 토큰만
@@ -61,7 +69,16 @@ Secrets에 다음 이름으로 등록합니다.
 
 중계 서버는 허용 출처 확인, 요청 크기 제한, 인증 토큰, IP별 분당 요청 제한을 적용하고
 OpenAI 요청에 `store: false`를 지정합니다. 질문에는 검색 결과 최대 8건만 포함하며 원문
-PDF 파일 전체는 보내지 않습니다.
+PDF 파일 전체는 보내지 않습니다. 공개 매뉴얼만 쪽별 파일로 Vector Store에 미리 등록하고,
+질문 시 관련도가 높은 최대 6건을 File Search로 가져옵니다. 법령·KDS·KCS 평문은 이 저장소에
+등록하지 않습니다.
+
+`store: false`는 Responses API 응답 저장 설정이며, 별도로 업로드한 매뉴얼 파일과 Vector
+Store를 즉시 삭제한다는 뜻은 아닙니다. 시험 저장소에는 7일 자동 만료를 설정하고 업로드
+파일에도 별도 만료를 설정합니다. 필요 없어진 시험 자료는 `npm run openai:manual:delete`로
+Vector Store와 업로드 파일을 함께 삭제합니다. 운영 저장소와 업로드 파일은 자동 만료되지
+않으므로 `npm run openai:manual:production:delete`로 명시적으로 삭제합니다. OpenAI 서비스
+자체의 API 데이터 처리와 보관에는 OpenAI 공식 데이터 정책이 적용됩니다.
 
 Cloudflare 배포에서는 Rate Limiting binding으로 IP별 분당 10회를 제한합니다. 이 제한은
 Cloudflare 위치별로 적용되고 비동기 집계되므로 정확한 과금 상한은 아닙니다. 브라우저의
@@ -90,6 +107,6 @@ Cloudflare Workers 호출 로그는 장애 확인을 위해 활성화합니다. 
 4. 잘못된 비밀번호로 잠금 해제가 실패하는지 확인합니다.
 5. 올바른 비밀번호로 검색과 암호화 PDF 열기가 되는지 확인합니다.
 6. 빌드 결과에 `OPENAI_API_KEY`, `AI_ACCESS_TOKEN`, `codex-openai-api`의 실제 값이 없는지 확인합니다.
-7. AI 답변의 `[근거 N]`이 화면의 전달 근거와 일치하고, 근거가 없을 때 버튼이 비활성화되는지 확인합니다.
+7. AI 답변의 `[매뉴얼 N쪽]`, `[근거 N]`이 화면의 출처와 일치하는지 확인합니다.
 8. `npm run worker:test`와 Wrangler 배포 번들 검사가 통과하는지 확인합니다.
-9. Cloudflare Secrets 목록에는 `OPENAI_API_KEY`, `AI_ACCESS_TOKEN` 이름만 표시되고 값은 노출되지 않는지 확인합니다.
+9. Cloudflare Secrets 목록에는 `OPENAI_API_KEY`, `AI_ACCESS_TOKEN`, `OPENAI_VECTOR_STORE_ID` 이름만 표시되고 값은 노출되지 않는지 확인합니다.
