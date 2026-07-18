@@ -907,6 +907,51 @@ input:focus-visible {
   white-space: pre-wrap;
 }
 
+.ai-source-section + .ai-source-section {
+  margin-top: 18px;
+}
+
+.ai-source-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 8px;
+  color: var(--ink-deep);
+  font-size: 10px;
+}
+
+.ai-source-heading strong {
+  color: var(--teal);
+  letter-spacing: 0.04em;
+}
+
+.ai-source-heading span {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.ai-search-state {
+  margin: 0 0 18px;
+  border-left: 2px solid var(--amber);
+  padding: 8px 11px;
+  background: var(--amber-soft);
+  color: #765c2b;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.ai-source-excerpt {
+  display: -webkit-box;
+  margin: 7px 0 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.55;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
 .ai-source-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -1,7 +1,7 @@
 # 설비 근거검색
 
-기계설비 매뉴얼, 법령, KDS·KCS 근거를 검색하고, 선택된 근거만 OpenAI에 전달해
-답변을 만드는 Vue 3 웹 앱입니다.
+기계설비 매뉴얼, 법령, KDS·KCS 근거를 검색하고, 공개 매뉴얼 의미검색과 선택된 근거를
+OpenAI에 전달해 답변을 만드는 Vue 3 웹 앱입니다.
 
 ## 보안 구조
 
@@ -55,14 +55,53 @@ npm run ai:server
 npm run dev
 ```
 
-검색어 또는 질문을 입력한 뒤 `비용 발생 · AI 답변 생성`을 누르면 관련도 상위 8건만 중계
-서버로 전송됩니다. 중계 서버는 OpenAI Responses API에 `store: false`로 요청하며 기본
-모델은 `gpt-5.6-terra`입니다.
+검색어 또는 질문을 입력한 뒤 `비용 발생 · AI 답변 생성`을 누르면 관련도 상위 8건과
+OpenAI Vector Store에 등록한 공개 매뉴얼만 검색합니다. 중계 서버는 OpenAI Responses API에
+`store: false`로 요청하며 기본 모델은 `gpt-5.6-terra`입니다.
 
 AI 질문은 전송할 때마다 API 이용료가 발생할 수 있습니다. 사용자는 비용 안내 확인란에
-동의해야 호출 버튼을 사용할 수 있으며, 성공한 질문 횟수와 입력·출력·합계 토큰은 현재
-접속 세션 동안 누적 표시됩니다. 이 확인과 집계는 브라우저에 저장하지 않으므로 자료를
-잠그거나 페이지를 새로 열면 초기화됩니다.
+동의해야 호출 버튼을 사용할 수 있습니다. 모델 토큰 요금 외에 File Search 호출료와 무료
+용량을 초과한 Vector Store 보관료가 발생할 수 있습니다. 성공한 질문 횟수와 입력·출력·합계
+토큰은 현재 접속 세션 동안만 표시됩니다.
+
+## 공개 매뉴얼 의미검색 시험
+
+평문 검색 자료에서 공개 매뉴얼 466쪽만 쪽별 Markdown으로 만들고, 7일 후 자동 만료되는
+시험용 OpenAI Vector Store에 등록합니다. 생성 파일, 업로드 상태와 저장소 ID는 모두
+`work/` 아래에 두어 Git에서 제외합니다.
+
+```sh
+nvm use
+npm run openai:manual:prepare
+npm run openai:manual:create
+npm run openai:manual:status
+npm run openai:manual:search -- "기계실 환기 기준"
+npm run openai:manual:test-answer
+```
+
+검증 후 Worker에 저장소 ID를 Secret으로 등록할 때만 다음 명령을 사용합니다. 실제 Worker와
+Vue 배포는 이 등록 작업과 별도로 수행합니다.
+
+```sh
+npm run worker:manual-store
+```
+
+시험 자료를 즉시 삭제하려면 `npm run openai:manual:delete`를 실행합니다. 시험 기간을 바꿀
+경우 `OPENAI_VECTOR_STORE_EXPIRES_DAYS`를 1~30 사이로 지정하며, 공개 운영 전에는 자료 갱신과
+삭제 절차를 다시 검토합니다.
+
+검증을 마친 뒤에는 만료되지 않는 운영용 저장소를 별도로 생성하고 Worker Secret을 운영용
+ID로 교체합니다. 운영 상태 파일도 `work/` 아래에만 보관합니다.
+
+```sh
+npm run openai:manual:production:create
+npm run openai:manual:production:status
+npm run openai:manual:production:test-answer
+npm run worker:manual-store:production
+```
+
+자료를 교체하거나 서비스를 종료할 때는 먼저 Worker 연결을 새 저장소로 바꾼 뒤
+`npm run openai:manual:production:delete`로 기존 운영 저장소와 업로드 파일을 삭제합니다.
 
 ## Cloudflare Workers에 AI 중계 서버 배포
 
@@ -86,8 +125,9 @@ npm run worker:secrets
 
 `worker:secrets`는 macOS 키체인의 `codex-openai-api`와
 `codex-facility-search-password`를 읽어 실제 값을 출력하거나 파일에 남기지 않고
-`OPENAI_API_KEY`, `AI_ACCESS_TOKEN` Cloudflare Secrets를 등록합니다. Worker에는 IP별 분당
-10회의 속도 제한이 적용됩니다.
+`OPENAI_API_KEY`, `AI_ACCESS_TOKEN` Cloudflare Secrets를 등록합니다. 공개 매뉴얼 의미검색을
+사용할 때는 `OPENAI_VECTOR_STORE_ID`도 Secret으로 등록합니다. Worker에는 IP별 분당 10회의
+속도 제한이 적용됩니다.
 
 현재 배포된 Worker와 Vue에서 사용하는 중계 주소는 다음과 같습니다.
 
@@ -104,7 +144,11 @@ https://mep-evidence-ai.ygchoi77.workers.dev/api/ask
 ```sh
 npm run worker:test
 npm run worker:deploy
+npm run worker:test:live
 ```
+
+`worker:test:live`는 키체인의 공유 비밀번호에서 접속 토큰을 파생해 배포된 Worker에 실제 질문
+1회를 보내며 비밀번호와 토큰을 출력하지 않습니다. OpenAI API 이용료가 발생할 수 있습니다.
 
 OpenAI 공식 모델 지침에 따라 비용과 품질의 균형이 필요한 이 검색 업무에는
 `gpt-5.6-terra`와 `reasoning.effort: low`를 명시적으로 사용합니다. 모델은

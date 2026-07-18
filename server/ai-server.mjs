@@ -6,6 +6,9 @@ import { askOpenAi, validateRequest } from "./ai-core.mjs";
 const PORT = Number.parseInt(process.env.PORT ?? process.env.AI_PORT ?? "8787", 10);
 const HOST = process.env.AI_HOST?.trim() || "127.0.0.1";
 const MODEL = process.env.OPENAI_MODEL?.trim() || "gpt-5.6-terra";
+const VECTOR_STORE_ID = /^vs_[A-Za-z0-9_-]+$/.test(process.env.OPENAI_VECTOR_STORE_ID?.trim() || "")
+  ? process.env.OPENAI_VECTOR_STORE_ID.trim()
+  : "";
 const ACCESS_SALT = "mep-evidence-ai-access-v1";
 const ACCESS_ITERATIONS = 600_000;
 const MAX_BODY_BYTES = 48 * 1024;
@@ -138,7 +141,7 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (request.method === "GET" && request.url === "/health") {
-    sendJson(response, 200, { ok: true, model: MODEL });
+    sendJson(response, 200, { ok: true, model: MODEL, manualSearch: Boolean(VECTOR_STORE_ID) });
     return;
   }
   if (request.method !== "POST" || request.url !== "/api/ask") {
@@ -161,7 +164,9 @@ const server = createServer(async (request, response) => {
       sendJson(response, 429, { error: "요청이 많습니다. 1분 뒤 다시 시도해 주세요." });
       return;
     }
-    const { question, evidence } = validateRequest(await readJson(request));
+    const { question, evidence } = validateRequest(await readJson(request), {
+      allowEmptyEvidence: Boolean(VECTOR_STORE_ID),
+    });
     const safetyIdentifier = createHash("sha256")
       .update(`mep-evidence:${requestIp(request)}`)
       .digest("hex");
@@ -171,6 +176,7 @@ const server = createServer(async (request, response) => {
       question,
       evidence,
       safetyIdentifier,
+      vectorStoreId: VECTOR_STORE_ID,
     });
     sendJson(response, 200, result);
   } catch (error) {

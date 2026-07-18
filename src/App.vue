@@ -84,10 +84,30 @@ type AiResult = {
   answer: string;
   model: string;
   requestId: string | null;
+  manualSources?: Array<{
+    fileId: string;
+    filename: string;
+    page: number | null;
+    title: string;
+    score: number | null;
+    excerpt: string;
+  }>;
+  manualCitationCheck?: {
+    status: "none" | "verified" | "mismatch";
+    citedPages: number[];
+    unmatchedPages: number[];
+  };
+  fileSearch?: {
+    enabled: boolean;
+    status: "disabled" | "enabled" | "completed" | "no_results" | "fallback";
+    resultCount: number;
+  };
   usage: {
     inputTokens: number | null;
     outputTokens: number | null;
     totalTokens: number | null;
+    cachedInputTokens?: number | null;
+    cacheWriteTokens?: number | null;
   };
 };
 
@@ -431,7 +451,7 @@ function goToPage(page: number) {
 
 async function askAi() {
   const question = query.value.trim();
-  if (aiLoading.value || !question || !aiEvidence.value.length || !aiCostAcknowledged.value) {
+  if (aiLoading.value || !question || !aiCostAcknowledged.value) {
     return;
   }
   if (!aiApiUrl) {
@@ -694,8 +714,8 @@ onBeforeUnmount(() => {
             </span>
           </div>
           <p class="ai-description">
-            현재 검색 결과 중 관련도 높은 최대 8건만 사용합니다. OpenAI 비밀키와 원문 PDF는
-            브라우저로 전달하지 않습니다.
+            공개 매뉴얼 의미검색과 현재 검색 결과 중 관련도 높은 최대 8건을 함께 사용합니다.
+            OpenAI 비밀키와 원문 PDF는 브라우저로 전달하지 않습니다.
           </p>
           <div class="ai-cost-notice" role="note" aria-labelledby="ai-cost-title">
             <div class="ai-cost-copy">
@@ -703,8 +723,8 @@ onBeforeUnmount(() => {
               <div>
                 <strong id="ai-cost-title">질문을 전송할 때마다 OpenAI API 이용료가 발생합니다.</strong>
                 <p>
-                  질문과 후속 질문은 각각 별도 API 호출입니다. 실제 비용은 사용 토큰과 모델 가격에
-                  따라 달라지므로 이 화면에서는 실제 토큰 사용량을 안내합니다.
+                  질문과 후속 질문은 각각 별도 API 호출이며 매뉴얼 File Search 호출료가 추가될 수
+                  있습니다. 실제 비용은 사용 토큰과 모델 가격에 따라 달라집니다.
                 </p>
               </div>
             </div>
@@ -721,16 +741,16 @@ onBeforeUnmount(() => {
           </div>
           <div class="ai-action-row">
             <div>
-              <strong>{{ aiEvidence.length }}건의 근거 선택</strong>
+              <strong>공개 매뉴얼 의미검색 + {{ aiEvidence.length }}건의 로컬 근거</strong>
               <span v-if="!query.trim()">먼저 위 검색창에 질문을 입력하세요.</span>
-              <span v-else-if="aiEvidence.length === 0">AI에 전달할 검색 근거가 없습니다.</span>
               <span v-else-if="!aiCostAcknowledged">위 비용 안내를 확인한 뒤 질문을 전송할 수 있습니다.</span>
-              <span v-else>답변의 인용 번호가 아래 근거 카드와 연결됩니다.</span>
+              <span v-else-if="aiEvidence.length === 0">로컬 결과가 없어도 공개 매뉴얼에서 의미검색합니다.</span>
+              <span v-else>AI가 매뉴얼과 로컬 근거를 함께 비교합니다.</span>
             </div>
             <button
               class="ai-button"
               type="button"
-              :disabled="!query.trim() || !aiEvidence.length || aiLoading || !aiApiUrl || !aiCostAcknowledged"
+              :disabled="!query.trim() || aiLoading || !aiApiUrl || !aiCostAcknowledged"
               @click="askAi"
             >
               {{ aiLoading ? "API 사용 중…" : "비용 발생 · AI 답변 생성" }}
@@ -751,7 +771,47 @@ onBeforeUnmount(() => {
               </span>
             </div>
             <p>{{ aiResult.answer }}</p>
-            <div class="ai-source-list" aria-label="AI 답변에 전달된 근거">
+            <div
+              v-if="aiResult.manualSources?.length"
+              class="ai-source-section"
+              aria-label="OpenAI 매뉴얼 의미검색 근거"
+            >
+              <p class="ai-source-heading">
+                <strong>매뉴얼 의미검색 근거</strong>
+                <span>{{ aiResult.manualSources.length }}건 · 2022.05 공개 매뉴얼</span>
+              </p>
+              <div class="ai-source-list">
+                <article v-for="source in aiResult.manualSources" :key="source.fileId || source.filename">
+                  <strong>{{ source.title }}</strong>
+                  <span>
+                    {{ source.page ? `PDF ${source.page}쪽` : source.filename }}
+                    <template v-if="source.score !== null"> · 검색점수 {{ source.score.toFixed(2) }}</template>
+                  </span>
+                  <p v-if="source.excerpt" class="ai-source-excerpt">{{ source.excerpt }}</p>
+                  <div>
+                    <button v-if="source.page" type="button" @click="openManual(source.page)">
+                      PDF 원문 ↗
+                    </button>
+                  </div>
+                </article>
+              </div>
+            </div>
+            <p v-else-if="aiResult.fileSearch?.status === 'fallback'" class="ai-search-state">
+              매뉴얼 의미검색을 사용할 수 없어 로컬 검색 근거만으로 답변했습니다.
+            </p>
+            <p
+              v-if="aiResult.manualCitationCheck?.status === 'mismatch'"
+              class="ai-search-state"
+            >
+              답변의 매뉴얼 쪽수와 검색된 PDF 쪽수가 일치하지 않습니다. 아래 PDF 원문 버튼으로
+              내용을 직접 확인해 주세요.
+            </p>
+            <div v-if="aiSources.length" class="ai-source-section" aria-label="브라우저 검색 근거">
+              <p class="ai-source-heading">
+                <strong>현행 법령·로컬 검색 근거</strong>
+                <span>{{ aiSources.length }}건</span>
+              </p>
+              <div class="ai-source-list">
               <article v-for="(source, sourceIndex) in aiSources" :key="source.id">
                 <strong>[근거 {{ sourceIndex + 1 }}] {{ source.title }}</strong>
                 <span>
@@ -766,6 +826,7 @@ onBeforeUnmount(() => {
                   </a>
                 </div>
               </article>
+              </div>
             </div>
             <p class="ai-caution">
               AI 답변은 검색 보조 자료입니다. 최종 설계값과 적용 조문은 원문·발주 조건·관할 기관에서
