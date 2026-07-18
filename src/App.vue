@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 type ItemKind = "manual" | "citation" | "article" | "instrument";
 type ItemStatus = "source" | "current" | "review";
@@ -69,6 +69,35 @@ type VaultManifest = {
   };
 };
 
+type AiEvidence = {
+  id: string;
+  title: string;
+  source: string;
+  page: number | null;
+  article: string;
+  status: ItemStatus;
+  excerpt: string;
+  officialUrl: string;
+};
+
+type AiResult = {
+  answer: string;
+  model: string;
+  requestId: string | null;
+  usage: {
+    inputTokens: number | null;
+    outputTokens: number | null;
+    totalTokens: number | null;
+  };
+};
+
+type AiUsageSummary = {
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+};
+
 const kindLabels: Record<ItemKind, string> = {
   manual: "매뉴얼",
   citation: "인용 근거",
@@ -111,6 +140,20 @@ const status = ref<"all" | ItemStatus>("all");
 const pdfLoading = ref(false);
 const pdfUrl = ref<string | null>(null);
 const searchInput = ref<HTMLInputElement | null>(null);
+const aiAccessToken = ref("");
+const aiLoading = ref(false);
+const aiResult = ref<AiResult | null>(null);
+const aiError = ref("");
+const aiSources = ref<AiEvidence[]>([]);
+const aiCostAcknowledged = ref(false);
+const aiUsageSummary = ref<AiUsageSummary>({
+  requests: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  totalTokens: 0,
+});
+const aiApiUrl = import.meta.env.VITE_AI_API_URL?.trim()
+  || (import.meta.env.DEV ? "http://localhost:8787/api/ask" : "");
 
 function bytesFromBase64(value: string) {
   return Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
@@ -127,6 +170,15 @@ function normalize(value = "") {
 
 function condensed(value = "") {
   return normalize(value).replace(/\s/g, "");
+}
+
+function safeOfficialUrl(value = "") {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" ? url.href : "";
+  } catch {
+    return "";
+  }
 }
 
 function itemText(item: SearchItem) {
@@ -193,6 +245,21 @@ function makeSnippet(item: SearchItem, searchQuery: string) {
   return `${selected.slice(0, 360).trim()}…`;
 }
 
+function makeEvidenceExcerpt(item: SearchItem, searchQuery: string) {
+  const fields = [item.context, item.quote, item.text, item.summary].filter(
+    (value): value is string => Boolean(value),
+  );
+  const tokens = normalize(searchQuery)
+    .split(" ")
+    .filter((token) => token.length > 1 && !stopWords.has(token));
+  const ordered = [
+    ...fields.filter((field) => tokens.some((token) => normalize(field).includes(token))),
+    ...fields,
+  ];
+  const unique = [...new Set(ordered)].join("\n");
+  return unique.length <= 1400 ? unique : `${unique.slice(0, 1400).trim()}…`;
+}
+
 function statusLabel(value: ItemStatus) {
   if (value === "current") return "현행 확인";
   if (value === "review") return "검토 필요";
@@ -219,6 +286,28 @@ async function deriveKey(sharedPassword: string, vault: VaultManifest) {
     false,
     ["decrypt"],
   );
+}
+
+async function deriveAiAccessToken(sharedPassword: string) {
+  const material = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(sharedPassword),
+    "PBKDF2",
+    false,
+    ["deriveBits"],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt: new TextEncoder().encode("mep-evidence-ai-access-v1"),
+      iterations: 600_000,
+      hash: "SHA-256",
+    },
+    material,
+    256,
+  );
+  const binary = Array.from(new Uint8Array(bits), (byte) => String.fromCharCode(byte)).join("");
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 async function decryptAsset(asset: VaultAsset, key: CryptoKey, vaultUrl: URL) {
@@ -252,15 +341,36 @@ const results = computed(() => {
     .slice(0, 60);
 });
 
+const aiEvidence = computed<AiEvidence[]>(() =>
+  results.value
+    .slice(0, 8)
+    .map(({ item }) => ({
+      id: item.id,
+      title: item.title || item.article || item.source || "제목 없음",
+      source: item.source ?? "",
+      page: item.page ?? null,
+      article: item.article ?? item.code ?? "",
+      status: item.status,
+      excerpt: makeEvidenceExcerpt(item, query.value),
+      officialUrl: safeOfficialUrl(item.officialUrl),
+    }))
+    .filter((item) => item.excerpt),
+);
+
 async function unlock() {
   if (!manifest.value || !manifestUrl.value || unlocking.value) return;
   unlocking.value = true;
   unlockError.value = "";
   try {
-    const key = await deriveKey(password.value, manifest.value);
+    const sharedPassword = password.value;
+    const [key, accessToken] = await Promise.all([
+      deriveKey(sharedPassword, manifest.value),
+      deriveAiAccessToken(sharedPassword),
+    ]);
     const decrypted = await decryptAsset(manifest.value.assets.index, key, manifestUrl.value);
     searchIndex.value = JSON.parse(new TextDecoder().decode(decrypted)) as SearchIndex;
     cryptoKey.value = key;
+    aiAccessToken.value = accessToken;
     password.value = "";
     window.setTimeout(() => searchInput.value?.focus(), 50);
   } catch {
@@ -278,7 +388,68 @@ function lock() {
   query.value = "";
   kind.value = "all";
   status.value = "all";
+  aiAccessToken.value = "";
+  aiResult.value = null;
+  aiSources.value = [];
+  aiError.value = "";
+  aiCostAcknowledged.value = false;
+  aiUsageSummary.value = { requests: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 };
 }
+
+async function askAi() {
+  const question = query.value.trim();
+  if (aiLoading.value || !question || !aiEvidence.value.length || !aiCostAcknowledged.value) {
+    return;
+  }
+  if (!aiApiUrl) {
+    aiError.value = "공개 AI 중계 서버 주소가 아직 설정되지 않았습니다.";
+    return;
+  }
+  if (!aiAccessToken.value) {
+    aiError.value = "자료를 다시 잠근 뒤 비밀번호로 접속해 주세요.";
+    return;
+  }
+
+  aiLoading.value = true;
+  aiError.value = "";
+  aiResult.value = null;
+  const evidence = aiEvidence.value;
+  try {
+    const response = await fetch(aiApiUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${aiAccessToken.value}`,
+      },
+      body: JSON.stringify({ question, evidence }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(
+        typeof data.error === "string" ? data.error : "AI 답변을 생성하지 못했습니다.",
+      );
+    }
+    const result = data as AiResult;
+    aiResult.value = result;
+    aiSources.value = evidence;
+    aiUsageSummary.value = {
+      requests: aiUsageSummary.value.requests + 1,
+      inputTokens: aiUsageSummary.value.inputTokens + (result.usage.inputTokens ?? 0),
+      outputTokens: aiUsageSummary.value.outputTokens + (result.usage.outputTokens ?? 0),
+      totalTokens: aiUsageSummary.value.totalTokens + (result.usage.totalTokens ?? 0),
+    };
+  } catch (error) {
+    aiError.value = error instanceof Error ? error.message : "AI 답변을 생성하지 못했습니다.";
+  } finally {
+    aiLoading.value = false;
+  }
+}
+
+watch([query, kind, status], () => {
+  aiResult.value = null;
+  aiSources.value = [];
+  aiError.value = "";
+});
 
 async function openManual(page = 1) {
   if (!manifest.value || !manifestUrl.value || !cryptoKey.value || pdfLoading.value) return;
@@ -478,6 +649,97 @@ onBeforeUnmount(() => {
       </aside>
 
       <section class="results" aria-live="polite">
+        <section class="ai-panel" aria-labelledby="ai-panel-title">
+          <div class="ai-panel-header">
+            <div>
+              <span class="ai-kicker">OPENAI · GROUNDED ANSWER</span>
+              <h2 id="ai-panel-title">검색 근거로 AI 답변 만들기</h2>
+            </div>
+            <span :class="['ai-state', { ready: aiApiUrl }]">
+              {{ aiApiUrl ? "연결 준비" : "공개 서버 준비 중" }}
+            </span>
+          </div>
+          <p class="ai-description">
+            현재 검색 결과 중 관련도 높은 최대 8건만 사용합니다. OpenAI 비밀키와 원문 PDF는
+            브라우저로 전달하지 않습니다.
+          </p>
+          <div class="ai-cost-notice" role="note" aria-labelledby="ai-cost-title">
+            <div class="ai-cost-copy">
+              <span class="ai-cost-symbol" aria-hidden="true">!</span>
+              <div>
+                <strong id="ai-cost-title">질문을 전송할 때마다 OpenAI API 이용료가 발생합니다.</strong>
+                <p>
+                  질문과 후속 질문은 각각 별도 API 호출입니다. 실제 비용은 사용 토큰과 모델 가격에
+                  따라 달라지므로 이 화면에서는 실제 토큰 사용량을 안내합니다.
+                </p>
+              </div>
+            </div>
+            <div v-if="aiUsageSummary.requests" class="ai-usage-summary" aria-label="현재 접속 사용량">
+              <span><strong>{{ aiUsageSummary.requests.toLocaleString("ko-KR") }}</strong>회 질문</span>
+              <span><strong>{{ aiUsageSummary.inputTokens.toLocaleString("ko-KR") }}</strong>입력 토큰</span>
+              <span><strong>{{ aiUsageSummary.outputTokens.toLocaleString("ko-KR") }}</strong>출력 토큰</span>
+              <span><strong>{{ aiUsageSummary.totalTokens.toLocaleString("ko-KR") }}</strong>합계 토큰</span>
+            </div>
+            <label class="ai-cost-confirm">
+              <input v-model="aiCostAcknowledged" type="checkbox" />
+              <span>API 이용료가 발생할 수 있음을 확인했습니다.</span>
+            </label>
+          </div>
+          <div class="ai-action-row">
+            <div>
+              <strong>{{ aiEvidence.length }}건의 근거 선택</strong>
+              <span v-if="!query.trim()">먼저 위 검색창에 질문을 입력하세요.</span>
+              <span v-else-if="aiEvidence.length === 0">AI에 전달할 검색 근거가 없습니다.</span>
+              <span v-else-if="!aiCostAcknowledged">위 비용 안내를 확인한 뒤 질문을 전송할 수 있습니다.</span>
+              <span v-else>답변의 인용 번호가 아래 근거 카드와 연결됩니다.</span>
+            </div>
+            <button
+              class="ai-button"
+              type="button"
+              :disabled="!query.trim() || !aiEvidence.length || aiLoading || !aiApiUrl || !aiCostAcknowledged"
+              @click="askAi"
+            >
+              {{ aiLoading ? "API 사용 중…" : "비용 발생 · AI 답변 생성" }}
+              <span aria-hidden="true">→</span>
+            </button>
+          </div>
+
+          <p v-if="aiError" class="ai-error" role="alert">{{ aiError }}</p>
+
+          <div v-if="aiResult" class="ai-answer">
+            <div class="ai-answer-meta">
+              <strong>AI 답변</strong>
+              <span>
+                {{ aiResult.model }}
+                <template v-if="aiResult.usage.totalTokens">
+                  · {{ aiResult.usage.totalTokens.toLocaleString("ko-KR") }} tokens
+                </template>
+              </span>
+            </div>
+            <p>{{ aiResult.answer }}</p>
+            <div class="ai-source-list" aria-label="AI 답변에 전달된 근거">
+              <article v-for="(source, sourceIndex) in aiSources" :key="source.id">
+                <strong>[근거 {{ sourceIndex + 1 }}] {{ source.title }}</strong>
+                <span>
+                  {{ [source.source, source.page ? `PDF ${source.page}쪽` : ""].filter(Boolean).join(" · ") }}
+                </span>
+                <div>
+                  <button v-if="source.page" type="button" @click="openManual(source.page)">
+                    PDF 원문 ↗
+                  </button>
+                  <a v-if="source.officialUrl" :href="source.officialUrl" target="_blank" rel="noreferrer">
+                    공식 원문 ↗
+                  </a>
+                </div>
+              </article>
+            </div>
+            <p class="ai-caution">
+              AI 답변은 검색 보조 자료입니다. 최종 설계값과 적용 조문은 원문·발주 조건·관할 기관에서
+              다시 확인하세요.
+            </p>
+          </div>
+        </section>
+
         <div class="results-heading">
           <div>
             <p>{{ query ? `“${query}” 검색 결과` : "주요 공식 근거" }}</p>
@@ -514,7 +776,12 @@ onBeforeUnmount(() => {
                 <button v-if="item.page" type="button" :disabled="pdfLoading" @click="openManual(item.page || 1)">
                   {{ pdfLoading ? "PDF 여는 중…" : `원문 ${item.page}쪽` }} <span aria-hidden="true">↗</span>
                 </button>
-                <a v-if="item.officialUrl" :href="item.officialUrl" target="_blank" rel="noreferrer">
+                <a
+                  v-if="safeOfficialUrl(item.officialUrl)"
+                  :href="safeOfficialUrl(item.officialUrl)"
+                  target="_blank"
+                  rel="noreferrer"
+                >
                   공식 원문 <span aria-hidden="true">↗</span>
                 </a>
               </div>
