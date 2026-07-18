@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractManualSources, inspectManualCitations } from "../server/ai-core.mjs";
+import { estimateOpenAiCost, extractManualSources, inspectManualCitations } from "../server/ai-core.mjs";
 import worker from "./index.mjs";
 
 const env = {
@@ -47,6 +47,23 @@ test("keeps the highest-scoring chunk when one manual page is returned twice", (
   assert.equal(sources[0].title, "높은 점수");
 });
 
+test("estimates standard model and File Search cost in USD", () => {
+  const cost = estimateOpenAiCost({
+    model: "gpt-5.6-terra",
+    usage: {
+      input_tokens: 100,
+      output_tokens: 20,
+      input_tokens_details: { cached_tokens: 10, cache_write_tokens: 5 },
+    },
+    fileSearchStatus: "completed",
+  });
+  assert.equal(cost.breakdown.standardInputTokens, 85);
+  assert.equal(cost.breakdown.fileSearchCalls, 1);
+  assert.equal(cost.modelUsd, 0.00053063);
+  assert.equal(cost.fileSearchUsd, 0.0025);
+  assert.equal(cost.estimatedTotalUsd, 0.00303063);
+});
+
 test("health check does not expose secrets", async () => {
   const response = await worker.fetch(request("/health"), env);
   assert.equal(response.status, 200);
@@ -82,6 +99,7 @@ test("forwards only validated evidence and returns usage", async (context) => {
     assert.equal(options.headers.Authorization, "Bearer test-openai-key");
     const body = JSON.parse(options.body);
     assert.equal(body.store, false);
+    assert.equal(body.service_tier, "default");
     assert.equal(body.model, "test-model");
     assert.equal(body.max_output_tokens, 2600);
     assert.match(body.input, /\[근거 1\]/);
@@ -94,7 +112,7 @@ test("forwards only validated evidence and returns usage", async (context) => {
     assert.deepEqual(body.include, ["file_search_call.results"]);
     return Response.json({
       id: "resp_test",
-      model: "test-model",
+      model: "gpt-5.6-terra",
       output_text: "테스트 답변 [근거 1]",
       output: [{
         type: "file_search_call",
@@ -137,6 +155,8 @@ test("forwards only validated evidence and returns usage", async (context) => {
   assert.deepEqual(data.completion, { status: "completed", reason: null });
   assert.equal(data.usage.totalTokens, 120);
   assert.equal(data.usage.cachedInputTokens, 10);
+  assert.equal(data.cost.estimatedTotalUsd, 0.0030275);
+  assert.equal(data.cost.breakdown.fileSearchCalls, 1);
   assert.equal(data.fileSearch.status, "completed");
   assert.equal(data.manualSources.length, 1);
   assert.equal(data.manualSources[0].page, 123);

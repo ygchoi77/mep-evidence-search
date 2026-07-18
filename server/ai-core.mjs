@@ -1,9 +1,77 @@
 const MAX_EVIDENCE = 8;
 const MAX_MANUAL_SOURCES = 6;
 const MAX_OUTPUT_TOKENS = 2600;
+const PRICING_SNAPSHOT = "2026-07-18";
+const FILE_SEARCH_USD_PER_CALL = 2.5 / 1000;
+const STANDARD_MODEL_PRICING = {
+  "gpt-5.6-terra": {
+    inputUsdPerMillion: 2.5,
+    cachedInputUsdPerMillion: 0.25,
+    cacheWriteUsdPerMillion: 3.125,
+    outputUsdPerMillion: 15,
+  },
+};
 
 function normalizeText(value, maxLength) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function finiteTokenCount(value) {
+  return Number.isFinite(value) && value >= 0 ? Number(value) : 0;
+}
+
+function roundUsd(value) {
+  return Math.round((value + Number.EPSILON) * 100_000_000) / 100_000_000;
+}
+
+function pricingForModel(model) {
+  const normalized = normalizeText(model, 120);
+  return Object.entries(STANDARD_MODEL_PRICING)
+    .find(([prefix]) => normalized === prefix || normalized.startsWith(`${prefix}-`))?.[1] ?? null;
+}
+
+export function estimateOpenAiCost({ model, usage, fileSearchStatus }) {
+  const pricing = pricingForModel(model);
+  if (!pricing || !usage) return null;
+  const inputTokens = finiteTokenCount(usage.input_tokens ?? usage.inputTokens);
+  const outputTokens = finiteTokenCount(usage.output_tokens ?? usage.outputTokens);
+  const cachedInputTokens = Math.min(
+    inputTokens,
+    finiteTokenCount(usage.input_tokens_details?.cached_tokens ?? usage.cachedInputTokens),
+  );
+  const cacheWriteTokens = Math.min(
+    Math.max(0, inputTokens - cachedInputTokens),
+    finiteTokenCount(usage.input_tokens_details?.cache_write_tokens ?? usage.cacheWriteTokens),
+  );
+  const standardInputTokens = Math.max(0, inputTokens - cachedInputTokens - cacheWriteTokens);
+  const inputUsd = standardInputTokens * pricing.inputUsdPerMillion / 1_000_000;
+  const cachedInputUsd = cachedInputTokens * pricing.cachedInputUsdPerMillion / 1_000_000;
+  const cacheWriteUsd = cacheWriteTokens * pricing.cacheWriteUsdPerMillion / 1_000_000;
+  const outputUsd = outputTokens * pricing.outputUsdPerMillion / 1_000_000;
+  const fileSearchCalls = ["completed", "no_results"].includes(fileSearchStatus) ? 1 : 0;
+  const fileSearchUsd = fileSearchCalls * FILE_SEARCH_USD_PER_CALL;
+  const modelUsd = inputUsd + cachedInputUsd + cacheWriteUsd + outputUsd;
+  return {
+    currency: "USD",
+    estimated: true,
+    pricingSnapshot: PRICING_SNAPSHOT,
+    serviceTier: "default",
+    modelUsd: roundUsd(modelUsd),
+    fileSearchUsd: roundUsd(fileSearchUsd),
+    estimatedTotalUsd: roundUsd(modelUsd + fileSearchUsd),
+    breakdown: {
+      standardInputTokens,
+      cachedInputTokens,
+      cacheWriteTokens,
+      outputTokens,
+      inputUsd: roundUsd(inputUsd),
+      cachedInputUsd: roundUsd(cachedInputUsd),
+      cacheWriteUsd: roundUsd(cacheWriteUsd),
+      outputUsd: roundUsd(outputUsd),
+      fileSearchCalls,
+    },
+    excludes: ["vector_store_storage", "cloudflare"],
+  };
 }
 
 export function validateRequest(body, { allowEmptyEvidence = false } = {}) {
@@ -160,6 +228,7 @@ export async function askOpenAi({
   const baseBody = {
     model,
     store: false,
+    service_tier: "default",
     reasoning: { effort: "low" },
     text: { verbosity: "medium" },
     max_output_tokens: MAX_OUTPUT_TOKENS,
@@ -237,9 +306,10 @@ export async function askOpenAi({
   if (fileSearchEnabled && fileSearchStatus !== "fallback") {
     fileSearchStatus = manualSources.length ? "completed" : "no_results";
   }
+  const responseModel = data.model || model;
   return {
     answer,
-    model: data.model || model,
+    model: responseModel,
     requestId: data.id || null,
     completion: {
       status: normalizeText(data.status, 40) || "completed",
@@ -259,5 +329,10 @@ export async function askOpenAi({
       cachedInputTokens: data.usage?.input_tokens_details?.cached_tokens ?? null,
       cacheWriteTokens: data.usage?.input_tokens_details?.cache_write_tokens ?? null,
     },
+    cost: estimateOpenAiCost({
+      model: responseModel,
+      usage: data.usage,
+      fileSearchStatus,
+    }),
   };
 }

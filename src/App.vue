@@ -113,6 +113,27 @@ type AiResult = {
     cachedInputTokens?: number | null;
     cacheWriteTokens?: number | null;
   };
+  cost?: {
+    currency: "USD";
+    estimated: boolean;
+    pricingSnapshot: string;
+    serviceTier: string;
+    modelUsd: number;
+    fileSearchUsd: number;
+    estimatedTotalUsd: number;
+    breakdown: {
+      standardInputTokens: number;
+      cachedInputTokens: number;
+      cacheWriteTokens: number;
+      outputTokens: number;
+      inputUsd: number;
+      cachedInputUsd: number;
+      cacheWriteUsd: number;
+      outputUsd: number;
+      fileSearchCalls: number;
+    };
+    excludes: string[];
+  } | null;
 };
 
 type AiUsageSummary = {
@@ -120,6 +141,9 @@ type AiUsageSummary = {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  estimatedUsd: number;
+  modelUsd: number;
+  fileSearchUsd: number;
 };
 
 const kindLabels: Record<ItemKind, string> = {
@@ -179,6 +203,9 @@ const aiUsageSummary = ref<AiUsageSummary>({
   inputTokens: 0,
   outputTokens: 0,
   totalTokens: 0,
+  estimatedUsd: 0,
+  modelUsd: 0,
+  fileSearchUsd: 0,
 });
 const aiApiUrl = import.meta.env.VITE_AI_API_URL?.trim()
   || (import.meta.env.DEV ? "http://localhost:8787/api/ask" : "");
@@ -194,6 +221,17 @@ function normalize(value = "") {
     .replace(/[^0-9a-z가-힣]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function formatUsd(value: number | null | undefined) {
+  if (!Number.isFinite(value)) return "계산 불가";
+  if (value! > 0 && value! < 0.0001) return "< $0.0001";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 4,
+    maximumFractionDigits: 4,
+  }).format(value!);
 }
 
 function condensed(value = "") {
@@ -441,7 +479,15 @@ function lock() {
   aiSources.value = [];
   aiError.value = "";
   aiCostAcknowledged.value = false;
-  aiUsageSummary.value = { requests: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  aiUsageSummary.value = {
+    requests: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    estimatedUsd: 0,
+    modelUsd: 0,
+    fileSearchUsd: 0,
+  };
 }
 
 function goToPage(page: number) {
@@ -494,6 +540,9 @@ async function askAi() {
       inputTokens: aiUsageSummary.value.inputTokens + (result.usage.inputTokens ?? 0),
       outputTokens: aiUsageSummary.value.outputTokens + (result.usage.outputTokens ?? 0),
       totalTokens: aiUsageSummary.value.totalTokens + (result.usage.totalTokens ?? 0),
+      estimatedUsd: aiUsageSummary.value.estimatedUsd + (result.cost?.estimatedTotalUsd ?? 0),
+      modelUsd: aiUsageSummary.value.modelUsd + (result.cost?.modelUsd ?? 0),
+      fileSearchUsd: aiUsageSummary.value.fileSearchUsd + (result.cost?.fileSearchUsd ?? 0),
     };
   } catch (error) {
     aiError.value = error instanceof Error ? error.message : "AI 답변을 생성하지 못했습니다.";
@@ -728,15 +777,16 @@ onBeforeUnmount(() => {
                 <strong id="ai-cost-title">질문을 전송할 때마다 OpenAI API 이용료가 발생합니다.</strong>
                 <p>
                   질문과 후속 질문은 각각 별도 API 호출이며 매뉴얼 File Search 호출료가 추가될 수
-                  있습니다. 실제 비용은 사용 토큰과 모델 가격에 따라 달라집니다.
+                  있습니다. 아래 금액은 OpenAI 표준 요금 기준 예상치이며 실제 청구액은 OpenAI
+                  사용량 대시보드에서 확인해야 합니다.
                 </p>
               </div>
             </div>
             <div v-if="aiUsageSummary.requests" class="ai-usage-summary" aria-label="현재 접속 사용량">
               <span><strong>{{ aiUsageSummary.requests.toLocaleString("ko-KR") }}</strong>회 질문</span>
-              <span><strong>{{ aiUsageSummary.inputTokens.toLocaleString("ko-KR") }}</strong>입력 토큰</span>
-              <span><strong>{{ aiUsageSummary.outputTokens.toLocaleString("ko-KR") }}</strong>출력 토큰</span>
-              <span><strong>{{ aiUsageSummary.totalTokens.toLocaleString("ko-KR") }}</strong>합계 토큰</span>
+              <span><strong>{{ formatUsd(aiUsageSummary.estimatedUsd) }}</strong>세션 예상 합계</span>
+              <span><strong>{{ formatUsd(aiUsageSummary.modelUsd) }}</strong>모델 예상 비용</span>
+              <span><strong>{{ formatUsd(aiUsageSummary.fileSearchUsd) }}</strong>File Search 예상</span>
             </div>
             <label class="ai-cost-confirm">
               <input v-model="aiCostAcknowledged" type="checkbox" />
@@ -769,11 +819,19 @@ onBeforeUnmount(() => {
               <strong>AI 답변</strong>
               <span>
                 {{ aiResult.model }}
-                <template v-if="aiResult.usage.totalTokens">
-                  · {{ aiResult.usage.totalTokens.toLocaleString("ko-KR") }} tokens
+                <template v-if="aiResult.cost">
+                  · 이번 질문 약 {{ formatUsd(aiResult.cost.estimatedTotalUsd) }}
+                </template>
+                <template v-else-if="aiResult.usage.totalTokens">
+                  · 비용 계산 불가
                 </template>
               </span>
             </div>
+            <p v-if="aiResult.cost" class="ai-cost-breakdown">
+              모델 {{ formatUsd(aiResult.cost.modelUsd) }} + File Search
+              {{ formatUsd(aiResult.cost.fileSearchUsd) }} · {{ aiResult.cost.pricingSnapshot }} 표준 요금 기준
+              · {{ aiResult.usage.totalTokens?.toLocaleString("ko-KR") ?? 0 }} 토큰
+            </p>
             <p class="ai-answer-copy">{{ aiResult.answer }}</p>
             <p
               v-if="aiResult.completion?.status === 'incomplete'"

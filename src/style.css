@@ -827,6 +827,16 @@ input:focus-visible {
   cursor: pointer;
 }
 
+.ai-cost-breakdown {
+  margin: 0 0 14px;
+  border-left: 3px solid #d6a348;
+  padding: 8px 11px;
+  background: #fff9eb;
+  color: #75561f;
+  font-size: 9px;
+  line-height: 1.6;
+}
+
 .ai-action-row {
   border-top: 1px solid #d8e2df;
   padding-top: 20px;
