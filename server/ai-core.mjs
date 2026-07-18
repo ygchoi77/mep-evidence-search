@@ -1,5 +1,6 @@
 const MAX_EVIDENCE = 8;
 const MAX_MANUAL_SOURCES = 6;
+const MAX_OUTPUT_TOKENS = 2600;
 
 function normalizeText(value, maxLength) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -161,7 +162,7 @@ export async function askOpenAi({
     store: false,
     reasoning: { effort: "low" },
     text: { verbosity: "medium" },
-    max_output_tokens: 1400,
+    max_output_tokens: MAX_OUTPUT_TOKENS,
     safety_identifier: safetyIdentifier,
     instructions: [
       "당신은 기계설비 설계 근거 검색 보조자입니다.",
@@ -240,6 +241,10 @@ export async function askOpenAi({
     answer,
     model: data.model || model,
     requestId: data.id || null,
+    completion: {
+      status: normalizeText(data.status, 40) || "completed",
+      reason: normalizeText(data.incomplete_details?.reason, 80) || null,
+    },
     manualSources,
     manualCitationCheck,
     fileSearch: {

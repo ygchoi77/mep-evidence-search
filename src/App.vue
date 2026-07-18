@@ -84,6 +84,10 @@ type AiResult = {
   answer: string;
   model: string;
   requestId: string | null;
+  completion?: {
+    status: string;
+    reason: string | null;
+  };
   manualSources?: Array<{
     fileId: string;
     filename: string;
@@ -770,7 +774,20 @@ onBeforeUnmount(() => {
                 </template>
               </span>
             </div>
-            <p>{{ aiResult.answer }}</p>
+            <p class="ai-answer-copy">{{ aiResult.answer }}</p>
+            <p
+              v-if="aiResult.completion?.status === 'incomplete'"
+              class="ai-search-state"
+              role="status"
+            >
+              <template v-if="aiResult.completion.reason === 'max_output_tokens'">
+                AI 답변이 최대 길이에 도달해 일부가 생략됐을 수 있습니다. 질문 범위를 나누어
+                다시 질문해 주세요.
+              </template>
+              <template v-else>
+                AI 응답이 완전히 생성되지 않았습니다. 중요한 내용은 원문 근거에서 확인해 주세요.
+              </template>
+            </p>
             <div
               v-if="aiResult.manualSources?.length"
               class="ai-source-section"

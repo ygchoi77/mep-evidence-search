@@ -45,6 +45,7 @@ console.log(JSON.stringify({
   status: response.status,
   model: data.model,
   answerPreview: String(data.answer || "").slice(0, 700),
+  completion: data.completion,
   manualPages: (data.manualSources || []).map((source) => source.page),
   manualCitationCheck: data.manualCitationCheck,
   fileSearch: data.fileSearch,

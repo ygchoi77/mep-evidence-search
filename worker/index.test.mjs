@@ -83,6 +83,7 @@ test("forwards only validated evidence and returns usage", async (context) => {
     const body = JSON.parse(options.body);
     assert.equal(body.store, false);
     assert.equal(body.model, "test-model");
+    assert.equal(body.max_output_tokens, 2600);
     assert.match(body.input, /\[근거 1\]/);
     assert.deepEqual(body.tools, [{
       type: "file_search",
@@ -133,6 +134,7 @@ test("forwards only validated evidence and returns usage", async (context) => {
   assert.equal(response.headers.get("Access-Control-Allow-Origin"), "https://ygchoi77.github.io");
   const data = await response.json();
   assert.equal(data.answer, "테스트 답변 [근거 1]");
+  assert.deepEqual(data.completion, { status: "completed", reason: null });
   assert.equal(data.usage.totalTokens, 120);
   assert.equal(data.usage.cachedInputTokens, 10);
   assert.equal(data.fileSearch.status, "completed");
@@ -151,6 +153,8 @@ test("allows a manual-only question when the vector store is configured", async 
     return Response.json({
       id: "resp_manual_only",
       model: "test-model",
+      status: "incomplete",
+      incomplete_details: { reason: "max_output_tokens" },
       output_text: "매뉴얼 답변 [매뉴얼 45쪽]",
       output: [{
         type: "file_search_call",
@@ -181,6 +185,10 @@ test("allows a manual-only question when the vector store is configured", async 
   const data = await response.json();
   assert.equal(data.manualSources[0].page, 45);
   assert.equal(data.manualCitationCheck.status, "verified");
+  assert.deepEqual(data.completion, {
+    status: "incomplete",
+    reason: "max_output_tokens",
+  });
 });
 
 test("still rejects empty evidence when manual search is not configured", async () => {
