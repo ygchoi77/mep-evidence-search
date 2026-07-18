@@ -50,6 +50,7 @@ console.log(JSON.stringify({
   question,
   model: result.model,
   answer: result.answer,
+  completion: result.completion,
   manualSources: result.manualSources.map((source) => ({
     page: source.page,
     title: source.title,

@@ -898,7 +898,7 @@ input:focus-visible {
   font-size: 9px;
 }
 
-.ai-answer > p:not(.ai-caution) {
+.ai-answer-copy {
   margin: 18px 0 25px;
   color: #263f43;
   font-family: Georgia, "Batang", serif;
